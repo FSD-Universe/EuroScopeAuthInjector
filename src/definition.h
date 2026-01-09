@@ -1,3 +1,6 @@
+// Copyright (c) 2025-2026 Half_nothing
+// SPDX-License-Identifier: MIT
+
 #pragma once
 
 #ifndef DEFINITION_H
@@ -16,9 +19,10 @@ typedef int (__cdecl *CURL_EASY_PERFORM_FUNC)(void *curl);
 #define PLUGIN_NAME "EuroScope Auth Injector"
 #define PLUGIN_VERSION "1.0.0"
 #define PLUGIN_DEVELOPER "Half_nothing"
-#define PLUGIN_COPYRIGHT "Copyright (C) 2025"
+#define PLUGIN_COPYRIGHT "MIT License (C) 2025-2026"
 
-#define LOG_FILE_PATH "C://EuroScopeInjector.log"
+#define LOG_FILE_PATH "EuroScopeInjector.log"
+#define INJECTOR_URL_FILENAME "InjectorUrl.txt"
 #define PLUGIN_DISPLAY_NAME "AuthInjector"
 #define INJECTOR_URL "http://127.0.0.1:6810/api/users/sessions/fsd"
 

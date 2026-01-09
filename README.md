@@ -10,6 +10,7 @@ EuroScope使用`libcurl`开源库进行HTTP(s)访问
 
 ## 如何使用
 
+### 手动编译
 首先克隆本仓库  
 随后进入`src/definition.h`文件  
 将其中`INJECTOR_URL`定义的url改成你自己的url  
@@ -40,11 +41,16 @@ Content-Length: 347
 修改完成之后编译, 在`bin`目录下会得到`EuroScopeInjector.dll`  
 这就是编译完成的插件, 使用`EuroScope`加载即可使用
 
+### 使用预编译版本
+首先前往Release页面下载插件, 并放置在任意路径  
+在同目录创建InjectorUrl.txt文件, 写入api地址, api要求[见上](#手动编译)  
+打开Euroscope加载插件即可
+
 ## 开源协议
 
 MIT License
 
-Copyright © 2025 Half_nothing
+Copyright © 2025-2026 Half_nothing
 
 无附加条款。
 

@@ -1,30 +1,34 @@
-﻿#include <windows.h>
+﻿// Copyright (c) 2025-2026 Half_nothing
+// SPDX-License-Identifier: MIT
+
+#include <windows.h>
 #include <fstream>
 #include <detours.h>
+#include <sstream>
+
 #include "AuthInjector.h"
 
-#pragma comment(lib, "detours.lib")
+CURL_EASY_INIT_FUNC AuthInjector::sOriginalCurlEasyInit = nullptr;
+CURL_EASY_SETOPT_FUNC AuthInjector::sOriginalCurlEasySetopt = nullptr;
+CURL_EASY_PERFORM_FUNC AuthInjector::sOriginalCurlEasyPerform = nullptr;
 
-CURL_EASY_INIT_FUNC AuthInjector::originalCurlEasyInit = nullptr;
-CURL_EASY_SETOPT_FUNC AuthInjector::originalCurlEasySetopt = nullptr;
-CURL_EASY_PERFORM_FUNC AuthInjector::originalCurlEasyPerform = nullptr;
+std::vector<std::pair<void *, std::string>> AuthInjector::sCurlHandles;
 
-std::vector<std::pair<void *, std::string>> AuthInjector::curlHandles;
-
-std::string AuthInjector::targetUrl = "https://auth.vatsim.net/api/fsd-jwt";
-std::string AuthInjector::replacementUrl = INJECTOR_URL;
+std::string AuthInjector::sTargetUrl = "https://auth.vatsim.net/api/fsd-jwt";
+std::string AuthInjector::sReplacementUrl = INJECTOR_URL;
+std::ofstream AuthInjector::sLogFile;
 
 void *__cdecl AuthInjector::hookedCurlEasyInit() {
     debugLog("hookedCurlEasyInit called");
 
-    if (!originalCurlEasyInit) {
-        debugLog("ERROR: originalCurlEasyInit is null");
+    if (!sOriginalCurlEasyInit) {
+        debugLog("ERROR: sOriginalCurlEasyInit is null");
         return nullptr;
     }
 
-    void *curl = originalCurlEasyInit();
+    void *curl = sOriginalCurlEasyInit();
     if (curl) {
-        curlHandles.emplace_back(curl, "");
+        sCurlHandles.emplace_back(curl, "");
         debugLog("hookedCurlEasyInit: Created curl handle %p", curl);
     } else {
         debugLog("hookedCurlEasyInit: Failed to create curl handle");
@@ -36,8 +40,8 @@ void *__cdecl AuthInjector::hookedCurlEasyInit() {
 int __cdecl AuthInjector::hookedCurlEasySetopt(void *curl, int option, ...) {
     debugLog("hookedCurlEasySetopt called: curl=%p, option=%d", curl, option);
 
-    if (!originalCurlEasySetopt) {
-        debugLog("ERROR: originalCurlEasySetopt is null");
+    if (!sOriginalCurlEasySetopt) {
+        debugLog("ERROR: sOriginalCurlEasySetopt is null");
         return 1;
     }
 
@@ -53,21 +57,21 @@ int __cdecl AuthInjector::hookedCurlEasySetopt(void *curl, int option, ...) {
 
         const char *actual_url = url;
 
-        if (url && strstr(url, targetUrl.c_str()) != nullptr) {
-            debugLog("hookedCurlEasySetopt: Target URL detected, replacing with: %s", replacementUrl.c_str());
-            actual_url = replacementUrl.c_str();
+        if (url && strstr(url, sTargetUrl.c_str()) != nullptr) {
+            debugLog("hookedCurlEasySetopt: Target URL detected, replacing with: %s", sReplacementUrl.c_str());
+            actual_url = sReplacementUrl.c_str();
 
             // 更新记录
-            for (auto &handle: curlHandles) {
+            for (auto &handle: sCurlHandles) {
                 if (handle.first == curl) {
-                    handle.second = replacementUrl;
+                    handle.second = sReplacementUrl;
                     debugLog("hookedCurlEasySetopt: Updated handle record");
                     break;
                 }
             }
         } else if (url) {
             // 更新记录
-            for (auto &handle: curlHandles) {
+            for (auto &handle: sCurlHandles) {
                 if (handle.first == curl) {
                     handle.second = url;
                     break;
@@ -75,22 +79,22 @@ int __cdecl AuthInjector::hookedCurlEasySetopt(void *curl, int option, ...) {
             }
         }
 
-        result = originalCurlEasySetopt(curl, option, actual_url);
+        result = sOriginalCurlEasySetopt(curl, option, actual_url);
     } else {
         // 对于其他选项，直接传递参数
         if (option >= 0 && option < 10000) {
             long value = va_arg(args, long);
-            result = originalCurlEasySetopt(curl, option, value);
+            result = sOriginalCurlEasySetopt(curl, option, value);
         } else if (option >= 10000 && option < 20000) {
             void *value = va_arg(args, void*);
-            result = originalCurlEasySetopt(curl, option, value);
+            result = sOriginalCurlEasySetopt(curl, option, value);
         } else if (option >= 20000 && option < 30000) {
             void *value = va_arg(args, void*);
-            result = originalCurlEasySetopt(curl, option, value);
+            result = sOriginalCurlEasySetopt(curl, option, value);
         } else {
             // 默认处理
             long value = va_arg(args, long);
-            result = originalCurlEasySetopt(curl, option, value);
+            result = sOriginalCurlEasySetopt(curl, option, value);
         }
     }
 
@@ -102,14 +106,14 @@ int __cdecl AuthInjector::hookedCurlEasySetopt(void *curl, int option, ...) {
 int __cdecl AuthInjector::hookedCurlEasyPerform(void *curl) {
     debugLog("hookedCurlEasyPerform called: curl=%p", curl);
 
-    if (!originalCurlEasyPerform) {
-        debugLog("ERROR: originalCurlEasyPerform is null");
+    if (!sOriginalCurlEasyPerform) {
+        debugLog("ERROR: sOriginalCurlEasyPerform is null");
         return 1;
     }
 
     // 记录请求的 URL
     std::string url;
-    for (const auto &handle: curlHandles) {
+    for (const auto &handle: sCurlHandles) {
         if (handle.first == curl) {
             url = handle.second;
             break;
@@ -120,7 +124,7 @@ int __cdecl AuthInjector::hookedCurlEasyPerform(void *curl) {
         debugLog("hookedCurlEasyPerform: Performing request to: %s", url.c_str());
     }
 
-    int result = originalCurlEasyPerform(curl);
+    int result = sOriginalCurlEasyPerform(curl);
     debugLog("hookedCurlEasyPerform completed with result: %d", result);
     return result;
 }
@@ -143,26 +147,26 @@ bool AuthInjector::installLibCurlHooks() {
     debugLog("libcurl.dll loaded at: 0x%p", hLibCurl);
 
     // 获取函数地址
-    originalCurlEasyInit = (CURL_EASY_INIT_FUNC) GetProcAddress(hLibCurl, "curl_easy_init");
-    originalCurlEasySetopt = (CURL_EASY_SETOPT_FUNC) GetProcAddress(hLibCurl, "curl_easy_setopt");
-    originalCurlEasyPerform = (CURL_EASY_PERFORM_FUNC) GetProcAddress(hLibCurl, "curl_easy_perform");
+    sOriginalCurlEasyInit = (CURL_EASY_INIT_FUNC) GetProcAddress(hLibCurl, "curl_easy_init");
+    sOriginalCurlEasySetopt = (CURL_EASY_SETOPT_FUNC) GetProcAddress(hLibCurl, "curl_easy_setopt");
+    sOriginalCurlEasyPerform = (CURL_EASY_PERFORM_FUNC) GetProcAddress(hLibCurl, "curl_easy_perform");
 
-    if (!originalCurlEasyInit) {
+    if (!sOriginalCurlEasyInit) {
         debugLog("ERROR: Failed to get curl_easy_init address");
         return false;
     }
-    if (!originalCurlEasySetopt) {
+    if (!sOriginalCurlEasySetopt) {
         debugLog("ERROR: Failed to get curl_easy_setopt address");
         return false;
     }
-    if (!originalCurlEasyPerform) {
+    if (!sOriginalCurlEasyPerform) {
         debugLog("WARNING: Failed to get curl_easy_perform address, continuing without hooking it");
     }
 
     debugLog("Original function addresses:");
-    debugLog("  curl_easy_init: 0x%p", originalCurlEasyInit);
-    debugLog("  curl_easy_setopt: 0x%p", originalCurlEasySetopt);
-    debugLog("  curl_easy_perform: 0x%p", originalCurlEasyPerform);
+    debugLog("  curl_easy_init: 0x%p", sOriginalCurlEasyInit);
+    debugLog("  curl_easy_setopt: 0x%p", sOriginalCurlEasySetopt);
+    debugLog("  curl_easy_perform: 0x%p", sOriginalCurlEasyPerform);
 
     // 开始 Detours 事务
     LONG result = DetourTransactionBegin();
@@ -179,8 +183,8 @@ bool AuthInjector::installLibCurlHooks() {
     }
 
     // 安装钩子
-    if (originalCurlEasyInit) {
-        result = DetourAttach(&(PVOID &) originalCurlEasyInit, hookedCurlEasyInit);
+    if (sOriginalCurlEasyInit) {
+        result = DetourAttach(&(PVOID &) sOriginalCurlEasyInit, hookedCurlEasyInit);
         if (result != NO_ERROR) {
             debugLog("ERROR: DetourAttach curl_easy_init failed: %d", result);
             DetourTransactionAbort();
@@ -189,8 +193,8 @@ bool AuthInjector::installLibCurlHooks() {
         debugLog("Successfully attached curl_easy_init hook");
     }
 
-    if (originalCurlEasySetopt) {
-        result = DetourAttach(&(PVOID &) originalCurlEasySetopt, hookedCurlEasySetopt);
+    if (sOriginalCurlEasySetopt) {
+        result = DetourAttach(&(PVOID &) sOriginalCurlEasySetopt, hookedCurlEasySetopt);
         if (result != NO_ERROR) {
             debugLog("ERROR: DetourAttach curl_easy_setopt failed: %d", result);
             DetourTransactionAbort();
@@ -199,8 +203,8 @@ bool AuthInjector::installLibCurlHooks() {
         debugLog("Successfully attached curl_easy_setopt hook");
     }
 
-    if (originalCurlEasyPerform) {
-        result = DetourAttach(&(PVOID &) originalCurlEasyPerform, hookedCurlEasyPerform);
+    if (sOriginalCurlEasyPerform) {
+        result = DetourAttach(&(PVOID &) sOriginalCurlEasyPerform, hookedCurlEasyPerform);
         if (result != NO_ERROR) {
             debugLog("WARNING: DetourAttach curl_easy_perform failed: %d", result);
             // 不中止事务，继续执行
@@ -229,18 +233,18 @@ void AuthInjector::uninstallLibCurlHooks() {
     DetourUpdateThread(GetCurrentThread());
 
     // 卸载钩子
-    if (originalCurlEasyInit) {
-        DetourDetach(&(PVOID &) originalCurlEasyInit, hookedCurlEasyInit);
+    if (sOriginalCurlEasyInit) {
+        DetourDetach(&(PVOID &) sOriginalCurlEasyInit, hookedCurlEasyInit);
         debugLog("Detached curl_easy_init hook");
     }
 
-    if (originalCurlEasySetopt) {
-        DetourDetach(&(PVOID &) originalCurlEasySetopt, hookedCurlEasySetopt);
+    if (sOriginalCurlEasySetopt) {
+        DetourDetach(&(PVOID &) sOriginalCurlEasySetopt, hookedCurlEasySetopt);
         debugLog("Detached curl_easy_setopt hook");
     }
 
-    if (originalCurlEasyPerform) {
-        DetourDetach(&(PVOID &) originalCurlEasyPerform, hookedCurlEasyPerform);
+    if (sOriginalCurlEasyPerform) {
+        DetourDetach(&(PVOID &) sOriginalCurlEasyPerform, hookedCurlEasyPerform);
         debugLog("Detached curl_easy_perform hook");
     }
 
@@ -248,20 +252,31 @@ void AuthInjector::uninstallLibCurlHooks() {
     DetourTransactionCommit();
 
     // 清理
-    curlHandles.clear();
+    sCurlHandles.clear();
 
     debugLog("=== uninstallLibCurlHooks completed ===");
 }
 
-AuthInjector::AuthInjector() :
+AuthInjector::AuthInjector(const std::string &logFilePath, const std::string &configFilePath) :
         CPlugIn(EuroScopePlugIn::COMPATIBILITY_CODE, PLUGIN_NAME, PLUGIN_VERSION,
                 PLUGIN_DEVELOPER, PLUGIN_COPYRIGHT) {
+    sLogFile.open(logFilePath, std::ios::out | std::ios::app);
+    std::ifstream injectorUrlFile(configFilePath, std::ios::in);
+    if (injectorUrlFile.is_open()) {
+        std::ostringstream oss;
+        oss << injectorUrlFile.rdbuf();
+        sReplacementUrl = oss.str();
+        injectorUrlFile.close();
+        std::string message("Replacement url change to ");
+        message += sReplacementUrl;
+        debugLog(message.c_str());
+        DisplayUserMessage(PLUGIN_DISPLAY_NAME, "Plugin", message.c_str(), true, false, false, false, false);
+    }
     debugLog("=== AuthInjector constructor started ===");
-    debugLog("Target URL: %s", targetUrl.c_str());
-    debugLog("Replacement URL: %s", replacementUrl.c_str());
+    debugLog("Target URL: %s", sTargetUrl.c_str());
+    debugLog("Replacement URL: %s", sReplacementUrl.c_str());
     if (installLibCurlHooks()) {
-        DisplayUserMessage(PLUGIN_DISPLAY_NAME, "Plugin", "libcurl.dll found and hooked",
-                           true, false, false, false, false);
+        DisplayUserMessage(PLUGIN_DISPLAY_NAME, "Plugin", "Plugin ready and hook finish, no error", true, false, false, false, false);
     }
     debugLog("=== AuthInjector constructor completed ===");
 }
@@ -270,6 +285,7 @@ AuthInjector::~AuthInjector() {
     debugLog("=== AuthInjector destructor started ===");
     uninstallLibCurlHooks();
     debugLog("=== AuthInjector destructor completed ===");
+    sLogFile.close();
 }
 
 // 调试日志
@@ -283,9 +299,7 @@ void AuthInjector::debugLog(const char *format, ...) {
     OutputDebugStringA(buffer);
     OutputDebugStringA("\n");
 
-    std::ofstream logfile(LOG_FILE_PATH, std::ios::app);
-    if (logfile.is_open()) {
-        logfile << buffer << std::endl;
-        logfile.close();
+    if (sLogFile.good()) {
+        sLogFile << buffer << std::endl;
     }
 }
